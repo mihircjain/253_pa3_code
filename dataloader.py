@@ -108,10 +108,10 @@ class CityScapesDataset(Dataset):
         img = torch.from_numpy(img.copy()).float()
         label = torch.from_numpy(label.copy()).long()
 
-        # create one-hot encoding
-        h, w = label.shape
-        target = torch.zeros(self.n_class, h, w)
-        for c in range(self.n_class):
-            target[c][label == c] = 1
+#         # create one-hot encoding
+#         h, w = label.shape
+#         target = torch.zeros(self.n_class, h, w)
+#         for c in range(self.n_class):
+#             target[c][label == c] = 1
 
-        return img, target, label
+        return img, label#target, label
