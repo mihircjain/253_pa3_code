@@ -1,5 +1,6 @@
 from torchvision import utils
 from basic_fcn import *
+from resnet18 import *
 from dataloader import *
 from utils import *
 # from utils import *
@@ -11,17 +12,18 @@ import time
 from tqdm import tqdm, tqdm_notebook
 # import sys
 
+torch.cuda.empty_cache()
 
 train_dataset = CityScapesDataset(csv_file='train.csv', transforms=transforms.RandomCrop(512,1024))
 val_dataset = CityScapesDataset(csv_file='val.csv')
 test_dataset = CityScapesDataset(csv_file='test.csv')
 train_loader = DataLoader(dataset=train_dataset,
-                          batch_size=4,
-                          num_workers=4,
+                          batch_size=3,
+                          num_workers=0,
                           shuffle=True, 
                          )
 val_loader = DataLoader(dataset=val_dataset,
-                          batch_size=2,
+                          batch_size=1,
                           num_workers=0,
                           shuffle=True)
 test_loader = DataLoader(dataset=test_dataset,
@@ -40,16 +42,17 @@ def init_weights(m):
 n_class = 34
 epochs = 100
 criterion = nn.CrossEntropyLoss() # Choose an appropriate loss function from https://pytorch.org/docs/stable/_modules/torch/nn/modules/loss.html
-fcn_model = FCN(n_class=n_class)
-fcn_model.apply(init_weights)
-#fcn_model = torch.load('best_model')
-optimizer = optim.Adam(fcn_model.parameters(), lr=5e-3)
+model = Resnet18(n_class=n_class)
+# model = FCN(n_class=n_class)
+# model.apply(init_weights)
+model = torch.load_state_dict(torch.load('resnet18_1'))
+optimizer = optim.Adam(model.parameters(), lr=5e-3)
 
 
 use_gpu = torch.cuda.is_available()
 if use_gpu:
     print("GPU is available")
-    fcn_model = fcn_model.cuda()
+    model = model.cuda()
     
 def train():
     '********  losses for all epochs  ********'
@@ -67,11 +70,13 @@ def train():
             if use_gpu:
                 inputs = X.cuda() # Move your inputs onto the gpu
                 labels = Y.cuda() # Move your labels onto the gpu
+                inputs.required_grad = False
+                labels.required_grad = False
 
             else:
                 inputs, labels =  X, Y # Unpack variables into inputs and labels
 
-            outputs = fcn_model(inputs)
+            outputs = model(inputs)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()
@@ -83,15 +88,17 @@ def train():
                 print("epoch{}, iter{}, loss: {}".format(epoch, iter, loss.item()))
         
         print("Finish epoch {}, time elapsed {}".format(epoch, time.time() - ts))
-        torch.save(fcn_model, 'best_model')
+        torch.save(model.state_dict(), "resnet18_"+str(epoch))
         
         '******** save average training loss for each epoch  ********'
         train_losses.append(running_loss/len(train_loader))
         '******** save average validation loss for each epoch  ********'
         val_loss = val(epoch)
+        torch.cuda.empty_cache()
         val_losses.append(val_loss)
         
-        fcn_model.train()
+        model.train()
+        torch.cuda.empty_cache()
         
     x = [i for i in range(epochs)]
     plt.title("Plot showing training and validation loss against number of epochs")
@@ -107,7 +114,7 @@ def train():
 
 
 def val(epoch):
-    fcn_model.eval()
+    model.eval()
 #     TP = [0 for i in range(34)]
 #     TP = torch.FloatTensor(TP)
 #     FN = [0 for i in range(34)]
@@ -122,20 +129,30 @@ def val(epoch):
     '******** running loss for one epoch  ********'
     running_loss = 0.0
     
-    for iter, (X, tar, Y) in tqdm(enumerate(val_loader)):
-        inputs, targets, Y = X, tar, Y.long()
+    for iter, (inputs, labels) in tqdm(enumerate(val_loader)):
+        inputs, labels = inputs, labels.long()
         if use_gpu:
-            inputs, labels = inputs.cuda(), Y.cuda()
+            inputs, labels = inputs.cuda(), labels.cuda()
 
-        outputs = fcn_model(inputs)
+        outputs = model(inputs)
         '******** caluculate validation loss  ********'
         loss = criterion(outputs, labels)
         '******** accumulate running_loss for each batch ********'
         running_loss += loss.item() * inputs.size(0)
         
-        _, predicted = torch.max(outputs.data, 1)
-        total += labels.size(0)
-        correct += predicted.eq(labels.data).cpu().sum()
+        outputs = outputs.cpu()
+        outputs = outputs.detach().numpy()
+        labels = labels.cpu()
+        labels = labels.detach().numpy()
+
+        predict = np.argmax(outputs, axis = 1)
+        correct = np.where(predict == labels, 1, 0).sum()
+        total = predict.size
+
+
+        # _, predicted = torch.max(outputs.data, 1)
+        # total += labels.size(0)
+        # correct += predicted.eq(labels.data).cpu().sum()
         
        
 #         tp = list()
@@ -162,7 +179,7 @@ def val(epoch):
     return (running_loss/len(val_loader))
 
 def test():
-    fcn_model.eval()
+    model.eval()
 #     TP = [0 for i in range(34)]
 #     TP = torch.FloatTensor(TP)
 #     FN = [0 for i in range(34)]
@@ -174,12 +191,12 @@ def test():
     # Evaluate
     total = 0
     correct = 0
-    for iter, (X, tar, Y) in tqdm(enumerate(val_loader)):
-        inputs, targets, Y = X, tar, Y.long()
+    for iter, (X, Y) in tqdm(enumerate(val_loader)):
+        inputs, labels = X, Y.long()
         if use_gpu:
-            inputs, labels = inputs.cuda(), Y.cuda()
+            inputs, labels = inputs.cuda(), labels.cuda()
 
-        outputs = fcn_model(inputs)
+        outputs = model(inputs)
         
         
         _, predicted = torch.max(outputs.data, 1)
@@ -214,5 +231,5 @@ def test():
     # Make sure to include a softmax after the output from your model
     
 if __name__ == "__main__":
-#     val(0)  # show the accuracy before training
+    # val(0)  # show the accuracy before training
     train()
